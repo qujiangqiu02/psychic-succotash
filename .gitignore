@@ -1,0 +1,22 @@
+# 忽略 VS 编译产物
+.vs/
+x64/
+Debug/
+Release/
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.log
+*.tlog
+*.sln
+*.vcxproj*
+*.user
+
+# 忽略 VS Code 本地配置
+.vscode/
+
+# 忽略系统文件
+Thumbs.db
+Desktop.ini

@@ -80,11 +80,7 @@ void updataWindow() {
 		putimage(x, y, &imgCards[i]);
 	}
 	
-	//渲染 拖动过程中的植物
-	if (curZhiWu > 0) {
-		IMAGE* img = imgZhiWu[curZhiWu - 1][0];
-		putimagePNG(curX - img->getwidth() / 2, curY - img->getheight() / 2, img);
-	}
+	
 
 	for(int i=0;i<3;i++){
 		for (int j = 0;j < 9;j++) {
@@ -97,6 +93,11 @@ void updataWindow() {
 			}
 		}
 
+	}
+	//渲染 拖动过程中的植物
+	if (curZhiWu > 0) {
+		IMAGE* img = imgZhiWu[curZhiWu - 1][0];
+		putimagePNG(curX - img->getwidth() / 2, curY - img->getheight() / 2, img);
 	}
 
 	EndBatchDraw();//结束双缓冲
@@ -120,6 +121,7 @@ void userClick() {
 			curY = msg.y;
 		}
 		else if(msg.message == WM_LBUTTONUP){
+
 			if (msg.x > 256 && msg.y > 179 && msg.y < 489) {
 				int row = (msg.y - 179) / 102;
 				int col = (msg.x - 256) / 81;
@@ -136,15 +138,75 @@ void userClick() {
 	}
 };
 
+void updataGame() {
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 9; j++) {
+			if (zhiwuMap[i][j].type > 0) {
+				zhiwuMap[i][j].frameIndex++;
+				int zhiwuType = zhiwuMap[i][j].type - 1;
+				int index = zhiwuMap[i][j].frameIndex;
+				if (imgZhiWu[zhiwuType][index] == NULL) {
+					zhiwuMap[i][j].frameIndex = 0;
+				}
+				else {
+					zhiwuMap[i][j].frameIndex = index;
+				}
+			}
+		}
+	}
+};
+
+void startUI() {
+	IMAGE imgMenu, imgMenu1, imgMenu2;
+	loadimage(&imgMenu, "res/Screen/MainMenu.png");
+	loadimage(&imgMenu1, "res/Screen/Adventure_1.png");
+	loadimage(&imgMenu2, "res/Screen/Adventure_0.png");
+	int flag = 0;
+	while (1) {
+		BeginBatchDraw();
+		putimage(0, 0, &imgMenu);
+		putimagePNG(475, 75, flag ? &imgMenu2 : &imgMenu1);
+		
+
+		ExMessage msg;
+		if (peekmessage(&msg)) {
+			if (msg.message == WM_LBUTTONDOWN && msg.x > 474 && msg.x < 474 + 300 && msg.y>75 && msg.y < 75 + 140) {
+				flag = 1;
+				//EndBatchDraw();
+			}
+			else if (msg.message == WM_LBUTTONUP&& flag) {
+				return;
+			}
+		}
+		EndBatchDraw();
+	}
+
+};
+
+
 int main(void) {
 	gameInit();
 
+	startUI();
+
+	int timer = 0;
+	bool flag = true;
 	while (1) {
 		userClick();
+		timer += getDelay();
+		if (timer > 70) {
+			flag = true;
+			timer = 0;
+		}
 
+		if (flag) {
+			flag = false;
+			//更新窗口内容
+			updataWindow();
+			updataGame();
+		}
+		
 
-		//更新窗口内容
-		updataWindow();
 	}
 
 	system("pause");

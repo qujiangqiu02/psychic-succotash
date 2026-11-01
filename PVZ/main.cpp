@@ -1,18 +1,10 @@
 #include <iostream>
-#include<graphics.h>
-#include<filesystem>
-#include<time.h>
-#include"tools.h"
-#include<mmsystem.h>
-#include<math.h>
+#include <filesystem>
+#include <time.h>
+#include "plant.h"
 #pragma comment(lib,"winmm.lib")
 
-
 using namespace std;
-#define WIN_WIDTH 900
-#define WIN_HEIGHT 600
-
-enum{ WAN_DOU, XIANG_RI_KUI, ZHI_WU_COUNT };
 
 IMAGE imgBg;  //表示背景图片
 IMAGE imaBar;
@@ -22,49 +14,25 @@ IMAGE imgSunshineBall[29]; //表示阳光球图片
 IMAGE imgZombies[22]; //表示僵尸图片
 IMAGE imgBulletNormal;  //表示豌豆子弹图片
 IMAGE imgBulletBlast[4];   //碰撞帧数组
-IMAGE imgZombieDead[20];
+IMAGE imgZombieDead[20];    //僵尸死亡的图片
+IMAGE imgZombieEat[21];    //僵尸吃植物图片
+IMAGE imgChomperEat[9];      //大嘴花啃食动画
+IMAGE imgChomperDigest[6];   //大嘴花消化动画
+IMAGE imgPotatoDown;         //土豆地雷出土前（地下）
+IMAGE imgPotatoBlast;        //土豆地雷爆炸
 
 int curX, curY;//当前选中的植物，在移动过程中位置
 int curZhiWu; //0:表示没有选中植物，1表示选中了第一个植物，2表示选中了第二个植物
 int sunshine;
+int plantCost[ZHI_WU_COUNT] = { 100, 50, 150, 25, 50 };  //豌豆/向日葵/大嘴花/土豆雷/坚果
 
-struct zhiwu
-{
-	int type;        //0:没有植物，1：第一种植物
-	int frameIndex;  //序列帧的序号
-	int shootCd;     //植物攻击冷却计时器
-};
 
-struct zhiwu zhiwuMap[3][9]; //表示植物的二维数组
 
-struct sunshineBall {
-	int x, y;   //阳光球在飘落过程中的坐标（x不变）
-	int frameIndex;  //当前显示的图片帧的序号
-	int destY;  //阳光球的目标位置
-	bool used;   //是否在使用
-	int timer;   //定时器
-	double xoff;  //阳光飞跃时每一帧的x偏移量
-	double yoff;  //阳光飞跃时每一帧的y偏移量
-};
+Zombie* zombies[20] = {};   // ← 关键：指针数组，不存对象
 
-//池,10个阳光球
-struct sunshineBall sunballs[20];
 
-struct Zombies {
-	int x, y, frameIndex, speed, row, blood;
-	bool used;
-	bool dead;
-};
 
-struct Zombies zombies[20];
-//子弹数据类型
-struct bullet {
-	int x, y, row, speed;
-	int frameIndex;      //帧序号
-	bool used;
-	bool blast;   //是否发生碰撞
-};
-struct bullet bullets[100];
+Plant* zhiwuMap[3][9] = {};
 
 
 bool fileExist(const char* name) {
@@ -78,9 +46,6 @@ void gameInit() {
 	loadimage(&imgBg, "res/bg.jpg");
 	loadimage(&imaBar, "res/bar5.png");
 
-	memset(imgZhiWu, 0, sizeof(imgZhiWu));
-	memset(zhiwuMap, 0, sizeof(zhiwuMap));
-
 	//初始化植物卡片图片
 	char name[64];
 	for (int i = 0; i < ZHI_WU_COUNT; i++) {
@@ -90,7 +55,7 @@ void gameInit() {
 
 		for (int j = 0;j < 20;j++) {
 			//生成植物的文件名
-			sprintf_s(name, sizeof(name), "res/zhiwu/%d/%d.png", i , j + 1);
+			sprintf_s(name, sizeof(name), "res/zhiwu/%d/%d.png", i, j + 1);
 			//先判断这个文件是否存在
 			if (fileExist(name)) {
 				imgZhiWu[i][j] = new IMAGE;
@@ -106,8 +71,9 @@ void gameInit() {
 	curZhiWu = 0;
 	sunshine = 50;
 
-	memset(sunballs, 0, sizeof(sunballs));
+	for (int i = 0; i < 3; i++) for (int j = 0; j < 9; j++) zhiwuMap[i][j] = nullptr;
 	for (int i = 0;i < 29;i++) {
+		Sunflower::resetPool();
 		sprintf_s(name, sizeof(name), "res/sunshine/%d.png", i + 1);
 		loadimage(&imgSunshineBall[i], name);
 	}
@@ -117,8 +83,8 @@ void gameInit() {
 
 
 	//创建游戏图形窗口
-	initgraph(WIN_WIDTH, WIN_HEIGHT,1);
-	
+	initgraph(WIN_WIDTH, WIN_HEIGHT, 1);
+
 	//设置当前字体
 	LOGFONT f;
 	gettextstyle(&f);
@@ -131,50 +97,67 @@ void gameInit() {
 	setcolor(BLUE);
 
 	//初始化僵尸数据
-	memset(zombies, 0, sizeof(zombies));
+	for (int i = 0; i < 20; i++) zombies[i] = nullptr;
 	for (int i = 0;i < 22;i++) {
 		sprintf_s(name, sizeof(name), "res/zm/%d.png", i + 1);
+		ConeheadZombie::loadRes();
+		BucketheadZombie::loadRes();
 		loadimage(&imgZombies[i], name);
 	}
 
 	loadimage(&imgBulletNormal, "res/bullets/bullet_normal.png");
-	memset(bullets, 0, sizeof(bullets));
+	Peashooter::resetPool();
 	//子弹爆炸帧加载
 	for (int i = 0;i < 4;i++)
 	{
 		sprintf_s(name, sizeof(name), "res/bullets/bullet_blast%d.png", i);
 		loadimage(&imgBulletBlast[i], name);
 	}
-	
+
+	for (int i = 0; i < 9; i++) {
+		sprintf_s(name, sizeof(name), "res/zhiwu/2_eat/%d.png", i + 1);   //大嘴花啃食动画
+		loadimage(&imgChomperEat[i], name);
+	}
+
+	for (int i = 0; i < 6; i++) {
+		sprintf_s(name, sizeof(name), "res/zhiwu/2_digest/%d.png", i + 1);    //大嘴花消化动画
+		loadimage(&imgChomperDigest[i], name);
+	}
+
+	loadimage(&imgPotatoDown, "res/zhiwu/3_down.png");    //土豆地雷出土前（地下）
+	loadimage(&imgPotatoBlast, "res/zhiwu/3_blast.png");  //土豆地雷爆炸
+
 	for (int i = 0;i < 20;i++) {
-		sprintf_s(name, sizeof(name), "res/zm_dead/%d.png", i + 1);
+		sprintf_s(name, sizeof(name), "res/zm_dead/Image%d.png", i + 1);
 		loadimage(&imgZombieDead[i], name);
+	}
+
+	for (int i = 0;i < 21;i++) {
+		sprintf_s(name, "res/zm_eat/%d.png", i + 1);
+			loadimage(&imgZombieEat[i], name);
 	}
 
 };
 
 void drawZombie() {
 	int zombieCount = sizeof(zombies) / sizeof(zombies[0]);
-	for (int i = 0;i < zombieCount;i++) {
-		if (zombies[i].used) {
-			IMAGE* img = &imgZombies[zombies[i].frameIndex];
-			putimagePNG(zombies[i].x, zombies[i].y - img->getheight(), img);
-		}
+	for (int i = 0; i < zombieCount; i++) {
+		if (zombies[i]) zombies[i]->draw();
 	}
 }
 
-void drawBullets() {
-	int bulletMax = sizeof(bullets) / sizeof(bullets[0]);
-	for (int i = 0;i < bulletMax;i++) {
-		if (bullets[i].used) {
-			if (bullets[i].blast) {
-				IMAGE* img = &imgBulletBlast[bullets[i].frameIndex];
-				putimagePNG(bullets[i].x, bullets[i].y, img);
-			}
-			else {
-				putimagePNG(bullets[i].x, bullets[i].y, &imgBulletNormal);
-			}
+
+
+void drawPlant() {
+	for (int i = 0;i < 3;i++) {
+		for (int j = 0;j < 9;j++) {
+			if (zhiwuMap[i][j]) zhiwuMap[i][j]->draw();
 		}
+	}
+	//渲染 拖动过程中的植物
+	if (curZhiWu > 0) {
+		IMAGE* img = imgZhiWu[curZhiWu - 1][0];
+		putimagePNG(curX - img->getwidth() / 2, curY - img->getheight() / 2, img);
 	}
 }
 
@@ -190,70 +173,19 @@ void updataWindow() {
 		int y = 6;
 		putimage(x, y, &imgCards[i]);
 	}
-
-
-
-	for (int i = 0;i < 3;i++) {
-		for (int j = 0;j < 9;j++) {
-			if (zhiwuMap[i][j].type > 0) {
-				int x = 256 + j * 81;
-				int y = 179 + i * 102 + 14;
-				int zhiwuType = zhiwuMap[i][j].type - 1;
-				int index = zhiwuMap[i][j].frameIndex;
-				putimagePNG(x, y, imgZhiWu[zhiwuType][index]);
-			}
-		}
-
-	}
-	//渲染 拖动过程中的植物
-	if (curZhiWu > 0) {
-		IMAGE* img = imgZhiWu[curZhiWu - 1][0];
-		putimagePNG(curX - img->getwidth() / 2, curY - img->getheight() / 2, img);
-	}
-
-	int sunballMax = sizeof(sunballs) / sizeof(sunballs[0]);
-	for (int i = 0;i < sunballMax;i++) {
-		if (sunballs[i].used||sunballs[i].xoff) {
-			IMAGE* img = &imgSunshineBall[sunballs[i].frameIndex];
-			putimagePNG(sunballs[i].x, sunballs[i].y, img);
-
-		}
-	}
-
+	drawPlant();
+	Sunflower::drawSunshines();
 	char scoreText[8];
 	sprintf_s(scoreText, sizeof(scoreText), "%d", sunshine);
 	outtextxy(276, 67, scoreText);     //输出阳光数
 
 	drawZombie();
-	drawBullets();
+	Peashooter::drawBullets();
 
 	EndBatchDraw();//结束双缓冲
 };
 
-void collectSunshine(ExMessage* msg) {
-	int count = sizeof(sunballs) / sizeof(sunballs[0]);
-	int w = imgSunshineBall[0].getwidth();
-	int h = imgSunshineBall[0].getheight();
-	for (int i = 0;i < count;i++) {
-		if (sunballs[i].used) {
-			//判断鼠标点击的坐标是否在阳光球的范围内
-			IMAGE* img = &imgSunshineBall[sunballs[i].frameIndex];
-			int x = sunballs[i].x;
-			int y = sunballs[i].y;
-			if (msg->x > x &&msg->x <x + w && msg->y > y && msg->y < y + h) {
-				sunballs[i].used = false;
-				//sunshine += 25;
-				mciSendString("play res/sunshine.mp3", 0, 0, 0);
-				//设置阳光球点击时的位置
-				double destY = 0;
-				double destX = 262;
-				double angle = atan((y - destY) / (x - destX));
-				sunballs[i].xoff = 90 * cos(angle);
-				sunballs[i].yoff = 90 * sin(angle);
-			}
-		}
-	}
-}
+
 
 void userClick() {
 	ExMessage msg;
@@ -267,7 +199,7 @@ void userClick() {
 				curZhiWu = index + 1;
 			}
 			else {
-				collectSunshine(&msg);
+				Sunflower::collectSunshine(&msg);
 			}
 		}
 		else if(msg.message == WM_MOUSEMOVE && status == 1){
@@ -280,9 +212,18 @@ void userClick() {
 			if (msg.x > 256 && msg.y > 179 && msg.y < 489) {
 				int row = (msg.y - 179) / 102;
 				int col = (msg.x - 256) / 81;
-				if (zhiwuMap[row][col].type == 0) {
-					zhiwuMap[row][col].type = curZhiWu;
-					zhiwuMap[row][col].frameIndex = 0;
+				if (zhiwuMap[row][col] == nullptr && curZhiWu >= 1 && curZhiWu <= ZHI_WU_COUNT) {
+					int cost = plantCost[curZhiWu - 1];
+					if (sunshine >= cost) {
+						switch (curZhiWu) {
+						case WAN_DOU + 1:       zhiwuMap[row][col] = new Peashooter(row, col); break;
+						case XIANG_RI_KUI + 1:  zhiwuMap[row][col] = new Sunflower(row, col); break;
+						case DA_ZUI_HUA + 1:    zhiwuMap[row][col] = new Chomper(row, col); break;
+						case TU_DOU_DI_LEI + 1: zhiwuMap[row][col] = new PotatoMine(row, col); break;
+						case JIAN_GUO_QIANG + 1: zhiwuMap[row][col] = new WallNut(row, col); break;
+						}
+						sunshine -= cost;
+					}
 				}
 			}
 
@@ -293,223 +234,129 @@ void userClick() {
 	}
 };
 
-void createSunshine() {
-	static int count = 0;
-	static int fre = 50;
-	count++;
-
-	if (count >= fre) {
-		fre = 100 + rand() % 400;  //随机生成阳光球的时间间隔
-		count = 0;
-		//从阳光池中取一个可以使用的
-		int sunshineBallMax = sizeof(sunballs) / sizeof(sunballs[0]);
-		int i;
-		for (i = 0;i < sunshineBallMax && sunballs[i].used;i++);
-		if (i >= sunshineBallMax) return; //没有可以使用的阳光球
-		sunballs[i].used = true;
-		sunballs[i].frameIndex = 0;
-		sunballs[i].x = 260 + rand() % (850 - 260);
-		sunballs[i].y = 60;
-		sunballs[i].destY = rand() % 4 * 90 + 200;   //
-		sunballs[i].timer = 0;
-		sunballs[i].xoff = 0;
-		sunballs[i].yoff = 0;
-
-	}
-	
-}
-
-void updateSunshine() {
-	int sunballMax = sizeof(sunballs) / sizeof(sunballs[0]);
-	for (int i = 0;i < sunballMax;i++) {
-		if (sunballs[i].used) {
-			sunballs[i].frameIndex = (sunballs[i].frameIndex + 1) % 29;
-			if (sunballs[i].timer == 0) {
-				sunballs[i].y += 2;
-			}
-			if (sunballs[i].y >= sunballs[i].destY) {
-				
-				sunballs[i].timer++;
-				if (sunballs[i].timer > 100) {
-					sunballs[i].used = false;
-				}
-			}
-		}
-		else if (sunballs[i].xoff) {
-			//设置阳光球点击时的位置
-			double destY = 0;
-			double destX = 262;
-			double angle = atan((sunballs[i].y - destY) / (sunballs[i].x - destX));
-			sunballs[i].xoff = 90 * cos(angle);
-			sunballs[i].yoff = 90 * sin(angle);
-			sunballs[i].x -= sunballs[i].xoff;
-			sunballs[i].y -= sunballs[i].yoff;
-			if (sunballs[i].y < 0 || sunballs[i].x < 262) {
-				sunballs[i].xoff = 0;
-				sunballs[i].yoff = 0;
-				sunshine += 25;
-			}
-		}
-	}
-}
-
 void createZombie() {
-	int ZombieMax = sizeof(zombies) / sizeof(zombies[0]);
 	static int zombieFre = 200;
 	static int count = 0;
-	count++;
-	if (count > zombieFre) {
-		count = 0;
-		zombieFre = rand() % 300 + 100;
-		int i;
-		for (i = 0;i < ZombieMax && zombies[i].used;i++);
-		if (i < ZombieMax) {
-			zombies[i].used = true;
-			zombies[i].x = WIN_WIDTH;
-			zombies[i].row = rand() % 3;    
-			zombies[i].y = 172 + (1 + zombies[i].row) * 100;
-			zombies[i].speed = 1;
-			zombies[i].blood = 100;
-		}
-	}
+	if (++count <= zombieFre) return;
+	count = 0;
+	zombieFre = rand() % 300 + 100;
+
+	int ZombieMax = sizeof(zombies) / sizeof(zombies[0]);
+	int i;
+	for (i = 0; i < ZombieMax && zombies[i] != nullptr; i++);
+	if (i >= ZombieMax) return;
+
+	int r = rand() % 10;
+	int row = rand() % 3;
+	if (r < 5)       zombies[i] = new NormalZombie(row);       // 0~4  共5/10 = 50%
+	else if (r > 4 && r < 8)  zombies[i] = new ConeheadZombie(row);     // 5~7  共3/10 = 30%
+	else             zombies[i] = new BucketheadZombie(row);   // 8~9  共2/10 = 20%
 }
 
-void updataZombie() {
+void updateZombie() {
 	int ZombieMax = sizeof(zombies) / sizeof(zombies[0]);
 	static int count = 0;
 	count++;
-	if (count > 2) {
+	if (count > 8) {
 		count = 0;
 	}
 	//更新僵尸的位置
-	for (int i = 0;i < ZombieMax;i++) {
-		if (zombies[i].used) {
-			zombies[i].x -= zombies[i].speed;
-			if (zombies[i].x < 170) {
-				MessageBox(NULL, "over", "over", 0);  //待优化
-				exit(0);
-			}
+	static int moveCount = 0;
+	moveCount++;
+	if (moveCount > 2) {        // 每 3 帧才移一次 → 速度降到原来 1/3
+		moveCount = 0;
+		for (int i = 0;i < ZombieMax;i++) {
+			if (zombies[i]) zombies[i]->move();
 		}
 	}
 	static int count2 = 0;
 	count2++;
 	if (count2 > 4) {
+		count2 = 0;
 		for (int i = 0;i < ZombieMax;i++) {
-			if (zombies[i].used) {
-				zombies[i].frameIndex = (zombies[i].frameIndex + 1) % 22;
-
+			if (!zombies[i]) continue;
+			zombies[i]->nextFrame();
+			if (zombies[i]->isDeadEnd()) {     //死亡动画放完 → 回收
+				delete zombies[i];
+				zombies[i] = nullptr;
 			}
 		}
 	}
 }
 
-void shoot() {
-	int lines[3] = { 0 };
+
+
+void checkZombie() {
 	int zombieCount = sizeof(zombies) / sizeof(zombies[0]);
-	int bulletMax = sizeof(bullets) / sizeof(bullets[0]);
-	int dangerX = WIN_WIDTH - imgZombies[0].getwidth();
 	for (int i = 0;i < zombieCount;i++) {
-		if (zombies[i].used && zombies[i].x<dangerX) {
-			lines[zombies[i].row] = 1;
+		Zombie* z = zombies[i];
+		if (!z||z->isDead())continue;
+		int row = z->getRow();
+		int col = -1;
+		for (int k = 0;k < 9;k++) {
+			Plant* p = zhiwuMap[row][k];
+			if (!p||!p->biteable()) continue;    //地下的土豆雷不啃
+			int plantX = 256 + k * 81;
+			int x1 = plantX + 10;   //植物左侧的坐标
+			int x2 = plantX + 60;   //植物右侧的坐标
+			int x3 = z->getX() + 80;   //僵尸左侧的坐标
+			int x4 = z->getX() + 200;   //僵尸右侧坐标
+			if (x3 > plantX + 10 && x3 < plantX + 60) { col = k; break; }   //找到嘴边的植物
 		}
-	}
-	for (int i = 0;i < 3;i++) {    //遍历每株植物
-		for (int j = 0;j < 9;j++) {
-			struct zhiwu* p = &zhiwuMap[i][j];
-			if (p->type == WAN_DOU + 1) {
-				p->shootCd++;   //每个豌豆自己计时
-				if (lines[i] && p->shootCd >= 35) {   //同行有僵尸，且冷却走完
-					p->shootCd = 0;    //重置自己的冷却
-					int k;
-					for (k = 0;k < bulletMax && bullets[k].used;k++);
-					if (k < bulletMax) {
-						bullets[k].used = true;
-						bullets[k].row = i;
-						bullets[k].speed = 20;
-						bullets[k].blast = false;
-						bullets[k].frameIndex = 0;
-						int plantX = 256 + j * 81;
-						int plantY = 179 + i * 102 + 14;
-						bullets[k].x = plantX + imgZhiWu[zhiwuMap[i][j].type - 1][0]->getwidth() - 10;
-						bullets[k].y = plantY + 5;
-					}
-				}
-				
+		if (col >= 0) {
+			Plant* p = zhiwuMap[row][col];
+			if (!z->isEating()) z->startEat();          //这只僵尸还没停 → 停下开啃
+			if (z->biteTick()) p->hurt(25);
+			if (p->isDead()) {
+				delete p;
+				zhiwuMap[row][col] = nullptr;
+				z->finishEat();
 			}
+		}
+		else if (z->isEating()) {
+			z->finishEat();                             //嘴边的植物没了(被吞/被炸/被别人吃光) → 恢复行走
 		}
 	}
 }
 
-void updateBullets() {
-	int countMax = sizeof(bullets) / sizeof(bullets[0]);
-	for (int i = 0;i < countMax;i++) {
-		if (bullets[i].used) {
-			bullets[i].x += bullets[i].speed;
-			if (bullets[i].x > WIN_WIDTH) {
-				bullets[i].used = false;
-			}
-			
-			if (bullets[i].blast) {
-				bullets[i].frameIndex++;
-				if (bullets[i].frameIndex >= 4) {
-					bullets[i].used = false;
-				}
-			}
-		}
-	}
-}
 
 void collisionCheck() {
-	int bulletCount = sizeof(bullets) / sizeof(bullets)[0];
-	int zombieCount = sizeof(zombies) / sizeof(zombies[0]);
-	int bulletWidth = imgBulletNormal.getwidth();
-	for (int i = 0;i < bulletCount;i++) {
-		if (bullets[i].used == false || bullets[i].blast)continue;
-		int bulletRight = bullets[i].x + bulletWidth;
-		for (int k = 0;k < zombieCount;k++) {
-			if (zombies[k].used == false)continue;
-			//僵尸受击范围
-			int zx_left = zombies[k].x + 80;
-			int zx_right = zombies[k].x + 110;
-			if (bullets[i].row == zombies[k].row && bulletRight > zx_left && bullets[i].x < zx_right) {  //僵尸与植物同行，子弹从右侧接触僵尸身体才碰撞
-				zombies[k].blood -= 10;
-				bullets[i].blast = true;
-				bullets[i].speed = 0;
-				if (zombies[k].blood <= zombies[k].blood * 0.1) {
-					zombies[k].dead = true;
-					zombies[k].speed = 0;
-					zombies[k].frameIndex = 0;
-
-				}
-				break;   //一个子弹只打一个僵尸
-			}
-		}
-	}
+	Peashooter::checkBullet();   //子弹对僵尸的碰撞检测
+	checkZombie();               //僵尸对植物的啃咬检测
 }
 
-void updataGame() {
+void updatePlant() {
 	for (int i = 0; i < 3; i++) {
 		for (int j = 0; j < 9; j++) {
-			if (zhiwuMap[i][j].type > 0) {
-				zhiwuMap[i][j].frameIndex++;
-				int zhiwuType = zhiwuMap[i][j].type - 1;
-				int index = zhiwuMap[i][j].frameIndex;
-				if (imgZhiWu[zhiwuType][index] == NULL) {
-					zhiwuMap[i][j].frameIndex = 0;
-				}
-				//else {
-				//	zhiwuMap[i][j].frameIndex = index;
-				//}
+			if (zhiwuMap[i][j]) zhiwuMap[i][j]->behaviour();   // 每帧：开枪/产阳光
+		}
+	}
+	static int count = 0;
+	if (++count >= 5) {
+		count = 0;
+		for (int i = 0;i < 3;i++) {
+			for (int j = 0;j < 9;j++) {
+				if (zhiwuMap[i][j]) zhiwuMap[i][j]->nextFrame();
 			}
 		}
 	}
+	for (int i = 0;i < 3;i++)
+		for (int j = 0;j < 9;j++)
+			if (zhiwuMap[i][j] && zhiwuMap[i][j]->isDead()) {
+				delete zhiwuMap[i][j];
+				zhiwuMap[i][j] = nullptr;
+			}
+	Sunflower::createSunshineFromSky();     // 原 createSunshine 前半段
+}
 
-	createSunshine(); //创建阳光
-	updateSunshine(); //更新阳光的状态
+void updateGame() {
+
+	
+	updatePlant();
+	Sunflower::updateSunshine();
 	createZombie(); //创建僵尸
-	updataZombie();  //更新僵尸状态
-	shoot();         //发射豌豆子弹
-	updateBullets();  //更新豌豆子弹
+	updateZombie();  //更新僵尸状态
+	Peashooter::updateBullets();
 	collisionCheck();  //实现豌豆子弹和僵尸的碰撞检测
 }
 
@@ -551,7 +398,7 @@ int main(void) {
 	while (1) {
 		userClick();
 		timer += getDelay();
-		if (timer > 70) {
+		if (timer > 15) {
 			flag = true;
 			timer = 0;
 		}
@@ -560,7 +407,7 @@ int main(void) {
 			flag = false;
 			//更新窗口内容
 			updataWindow();
-			updataGame();
+			updateGame();
 		}
 		
 
